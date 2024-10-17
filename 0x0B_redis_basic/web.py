@@ -1,59 +1,38 @@
 #!/usr/bin/env python3
-""" Module for Implementing an expiring web cache and tracker """
-
-from functools import wraps
+'''A module with tools for request caching and tracking.
+'''
 import redis
 import requests
+from functools import wraps
 from typing import Callable
-import time  # Import the time module for tracking cache expiration
-
-r = redis.Redis()
 
 
-def count_requests(method: Callable) -> Callable:
-    """ Decorator for counting how many times a request has been made """
+redis_store = redis.Redis()
+'''The module-level Redis instance.
+'''
 
+
+def data_cacher(method: Callable) -> Callable:
+    '''Caches the output of fetched data.
+    '''
     @wraps(method)
-    def wrapper(url):
-        """ Wrapper for decorator functionality """
-        # Get the current count
-        count = int(r.get(f"count:{url}") or 0)
-
-        # Check if the cache is present
-        cached_html = r.get(f"cached:{url}")
-        if cached_html:
-            return cached_html.decode('utf-8')
-
-        # Refresh the cache and increment the count
-        html = method(url)
-        r.setex(f"cached:{url}", 10, html)
-        r.incr(f"count:{url}")
-
-        return html
-
-    return wrapper
+    def invoker(url) -> str:
+        '''The wrapper function for caching the output.
+        '''
+        redis_store.incr(f'count:{url}')
+        result = redis_store.get(f'result:{url}')
+        if result:
+            return result.decode('utf-8')
+        result = method(url)
+        redis_store.set(f'count:{url}', 0)
+        redis_store.setex(f'result:{url}', 10, result)
+        return result
+    return invoker
 
 
-@count_requests
+@data_cacher
 def get_page(url: str) -> str:
-    """ Uses the requests module to obtain the HTML
-    content of a particular URL and returns it.
-    """
-    req = requests.get(url)
-    return req.text
-
-
-# Example usage
-if __name__ == "__main__":
-    url = "http://google.com"
-
-    # Perform requests to trigger the decorator
-    for _ in range(127):
-        get_page(url)
-
-    # Wait for the cache to expire
-    time.sleep(11)
-
-    # Check the count after cache expiration
-    count_after_expiration = int(r.get(f"count:{url}") or 0)
-    print(count_after_expiration)  # Expected output: 0
+    '''Returns the content of a URL after caching the request's response,
+    and tracking the request.
+    '''
+    return requests.get(url).text
